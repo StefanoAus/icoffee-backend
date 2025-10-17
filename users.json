@@ -1,20 +1,20 @@
 [
-    {
-        "username": "mario",
-        "password": "1234",
-        "group": "ufficio",
-        "role": "user"
-    },
-    {
-        "username": "anna",
-        "password": "abcd",
-        "group": "ufficio",
-        "role": "admin"
-    },
-    {
-        "username": "luca",
-        "password": "1234",
-        "group": "ufficio",
-        "role": "user"
-    }
+  {
+    "username": "mario",
+    "password": "1234",
+    "group": "ufficio",
+    "role": "admin"
+  },
+  {
+    "username": "anna",
+    "password": "abcd",
+    "group": "ufficio",
+    "role": "admin"
+  },
+  {
+    "username": "luca",
+    "password": "1234",
+    "group": "ufficio",
+    "role": "user"
+  }
 ]

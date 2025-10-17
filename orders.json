@@ -1,68 +1,84 @@
 {
-    "2025-10-14": [
-        {
-            "username": "mario",
-            "group": "ufficio",
-            "order": {
-                "drink": {
-                    "item": "Caffè",
-                    "variant": "Corto"
-                },
-                "food": {
-                    "item": "Cornetto",
-                    "variant": "Crema"
-                }
-            }
+  "2025-10-14": [
+    {
+      "username": "mario",
+      "group": "ufficio",
+      "order": {
+        "drink": {
+          "item": "Caffè",
+          "variant": "Corto"
         },
-        {
-            "username": "anna",
-            "group": "ufficio",
-            "order": {
-                "food": {
-                    "item": "Cornetto",
-                    "variant": "Vuoto"
-                }
-            }
+        "food": {
+          "item": "Cornetto",
+          "variant": "Crema"
         }
-    ],
-    "2025-10-16": [
-        {
-            "username": "mario",
-            "group": "ufficio",
-            "order": {
-                "drink": {
-                    "item": "Cappuccino",
-                    "variant": "Classico"
-                }
-            }
-        },
-        {
-            "username": "anna",
-            "group": "ufficio",
-            "order": {
-                "drink": {
-                    "item": "Caffè",
-                    "variant": "Corto"
-                },
-                "food": {
-                    "item": "Cornetto",
-                    "variant": "Vuoto"
-                }
-            }
-        },
-        {
-            "username": "luca",
-            "group": "ufficio",
-            "order": {
-                "drink": {
-                    "item": "Caffè",
-                    "variant": "Corto"
-                },
-                "food": {
-                    "item": "Cornetto",
-                    "variant": "Vuoto"
-                }
-            }
+      }
+    },
+    {
+      "username": "anna",
+      "group": "ufficio",
+      "order": {
+        "food": {
+          "item": "Cornetto",
+          "variant": "Vuoto"
         }
-    ]
+      }
+    }
+  ],
+  "2025-10-16": [
+    {
+      "username": "mario",
+      "group": "ufficio",
+      "order": {
+        "drink": {
+          "item": "Cappuccino",
+          "variant": "Classico"
+        }
+      }
+    },
+    {
+      "username": "anna",
+      "group": "ufficio",
+      "order": {
+        "drink": {
+          "item": "Caffè",
+          "variant": "Corto"
+        },
+        "food": {
+          "item": "tramezzino",
+          "variant": "prosciutto e formaggio"
+        }
+      }
+    },
+    {
+      "username": "luca",
+      "group": "ufficio",
+      "order": {
+        "drink": {
+          "item": "Caffè",
+          "variant": "Corto"
+        },
+        "food": {
+          "item": "Cornetto",
+          "variant": "Vuoto"
+        }
+      }
+    }
+  ],
+  "2025-10-17": [
+    {
+      "username": "anna",
+      "group": "ufficio",
+      "order": {
+        "drink": {
+          "item": "Caffè",
+          "variant": "Lungo"
+        },
+        "food": {
+          "item": "Cornetto",
+          "variant": "Vuoto"
+        }
+      }
+    }
+  ]
 }
