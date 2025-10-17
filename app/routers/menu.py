@@ -1,16 +1,51 @@
 from __future__ import annotations
 from typing import Any, Dict, List
+
 from fastapi import APIRouter
-from ..storage import MENU_FILE, read_json_file, write_json_file
+from psycopg.rows import dict_row
+
 from ..common import success, error_response
-from ..utils import normalize_menu_structure, resolve_category_key, get_item_index
+from ..db import get_connection
+from ..utils import normalize_menu_structure, resolve_category_key
 
 router = APIRouter()
 
 @router.get("/menu", response_model=None)
 def get_menu():
-    menu = normalize_menu_structure(read_json_file(MENU_FILE))
-    return success(drinks=menu["drinks"], foods=menu["foods"])
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                SELECT mi.id, mi.category, mi.name, mo.name AS option_name
+                FROM menu_items mi
+                LEFT JOIN menu_options mo ON mo.item_id = mi.id
+                ORDER BY mi.category, mi.name, mo.name
+                """
+            )
+            rows = cursor.fetchall()
+
+    grouped: Dict[int, Dict[str, Any]] = {}
+    for row in rows:
+        item_id = row["id"]
+        entry = grouped.setdefault(
+            item_id,
+            {"category": row["category"], "name": row["name"], "options": []},
+        )
+        option_name = row.get("option_name")
+        if option_name and option_name not in entry["options"]:
+            entry["options"].append(option_name)
+
+    raw_menu = {"drinks": [], "foods": []}
+    for entry in grouped.values():
+        raw_menu.setdefault(entry["category"], []).append(
+            {"name": entry["name"], "options": entry["options"]}
+        )
+
+    normalized = normalize_menu_structure(raw_menu)
+    drinks = sorted(normalized["drinks"], key=lambda item: item["name"])
+    foods = sorted(normalized["foods"], key=lambda item: item["name"])
+
+    return success(drinks=drinks, foods=foods)
 
 @router.post("/menu", response_model=None)
 def add_menu_item(payload: Dict[str, Any]):
@@ -35,13 +70,32 @@ def add_menu_item(payload: Dict[str, Any]):
     if not options:
         return error_response(400, "Specificare almeno una variante")
 
-    menu = normalize_menu_structure(read_json_file(MENU_FILE))
-    if get_item_index(menu, category_key, name) != -1:
-        return error_response(409, "Esiste già una voce con questo nome")
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT 1 FROM menu_items WHERE category = %s AND name = %s",
+                (category_key, name),
+            )
+            if cursor.fetchone() is not None:
+                return error_response(409, "Esiste già una voce con questo nome")
 
-    menu[category_key].append({ "name": name, "options": options })
-    if not write_json_file(MENU_FILE, menu):
-        return error_response(500, "Impossibile salvare il menu")
+            cursor.execute(
+                """
+                INSERT INTO menu_items (category, name)
+                VALUES (%s, %s)
+                RETURNING id
+                """,
+                (category_key, name),
+            )
+            item_id = cursor.fetchone()["id"] # type: ignore
+
+            for option in options:
+                cursor.execute(
+                    "INSERT INTO menu_options (item_id, name) VALUES (%s, %s)",
+                    (item_id, option),
+                )
+
+            conn.commit()
 
     return success()
 
@@ -57,36 +111,58 @@ def update_menu_item(payload: Dict[str, Any]):
     if category_key is None or not name:
         return error_response(400, "Dati non validi per l'aggiornamento")
 
-    menu = normalize_menu_structure(read_json_file(MENU_FILE))
-    index = get_item_index(menu, category_key, name)
-    if index == -1:
-        return error_response(404, "Voce non trovata")
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT id, name FROM menu_items WHERE category = %s AND name = %s",
+                (category_key, name),
+            )
+            existing = cursor.fetchone()
+            if existing is None:
+                return error_response(404, "Voce non trovata")
 
-    current = menu[category_key][index]
-    new_name = str(updates.get("newName", current["name"])).strip()
-    if not new_name:
-        return error_response(400, "Il nome aggiornato non può essere vuoto")
+            new_name = str(updates.get("newName", existing["name"])).strip()
+            if not new_name:
+                return error_response(400, "Il nome aggiornato non può essere vuoto")
 
-    if new_name != current["name"] and get_item_index(menu, category_key, new_name) != -1:
-        return error_response(409, "Esiste già una voce con il nuovo nome")
+            if new_name != existing["name"]:
+                cursor.execute(
+                    "SELECT 1 FROM menu_items WHERE category = %s AND name = %s",
+                    (category_key, new_name),
+                )
+                if cursor.fetchone() is not None:
+                    return error_response(409, "Esiste già una voce con il nuovo nome")
 
-    options = current["options"]
-    if "options" in updates:
-        incoming = updates.get("options")
-        if not isinstance(incoming, list):
-            return error_response(400, "Formato varianti non valido")
-        options = []
-        for option in incoming:
-            if isinstance(option, str):
-                trimmed = option.strip()
-                if trimmed and trimmed not in options:
-                    options.append(trimmed)
-        if not options:
-            return error_response(400, "Inserire almeno una variante")
+            options = None
+            if "options" in updates:
+                incoming = updates.get("options")
+                if not isinstance(incoming, list):
+                    return error_response(400, "Formato varianti non valido")
+                parsed: List[str] = []
+                for option in incoming:
+                    if isinstance(option, str):
+                        trimmed = option.strip()
+                        if trimmed and trimmed not in parsed:
+                            parsed.append(trimmed)
+                if not parsed:
+                    return error_response(400, "Inserire almeno una variante")
+                options = parsed
 
-    menu[category_key][index] = {"name": new_name, "options": options}
-    if not write_json_file(MENU_FILE, menu):
-        return error_response(500, "Impossibile salvare il menu")
+            if new_name != existing["name"]:
+                cursor.execute(
+                    "UPDATE menu_items SET name = %s WHERE id = %s",
+                    (new_name, existing["id"]),
+                )
+
+            if options is not None:
+                cursor.execute("DELETE FROM menu_options WHERE item_id = %s", (existing["id"],))
+                for option in options:
+                    cursor.execute(
+                        "INSERT INTO menu_options (item_id, name) VALUES (%s, %s)",
+                        (existing["id"], option),
+                    )
+
+            conn.commit()
 
     return success()
 
@@ -101,13 +177,17 @@ def delete_menu_item(payload: Dict[str, Any]):
     if category_key is None or not name:
         return error_response(400, "Dati non validi per l'eliminazione")
 
-    menu = normalize_menu_structure(read_json_file(MENU_FILE))
-    index = get_item_index(menu, category_key, name)
-    if index == -1:
-        return error_response(404, "Voce non trovata")
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT id FROM menu_items WHERE category = %s AND name = %s",
+                (category_key, name),
+            )
+            existing = cursor.fetchone()
+            if existing is None:
+                return error_response(404, "Voce non trovata")
 
-    menu[category_key].pop(index)
-    if not write_json_file(MENU_FILE, menu):
-        return error_response(500, "Impossibile salvare il menu")
+            cursor.execute("DELETE FROM menu_items WHERE id = %s", (existing["id"],))
+            conn.commit()
 
     return success()

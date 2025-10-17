@@ -1,9 +1,11 @@
 from __future__ import annotations
 from typing import Any, Dict, List
+
 from fastapi import APIRouter, Query
-from ..storage import USERS_FILE, GROUPS_FILE, read_json_file, write_json_file
+from psycopg.rows import dict_row
+
 from ..common import success, error_response
-from ..utils import count_admins
+from ..db import get_connection
 
 router = APIRouter()
 
@@ -12,14 +14,20 @@ def login(payload: Dict[str, Any]):
     username = str(payload.get("username", ""))
     password = str(payload.get("password", ""))
 
-    users = read_json_file(USERS_FILE) or []
-    for user in users:
-        if user.get("username") == username and user.get("password") == password:
-            return success(
-                username=user.get("username"),
-                group=user.get("group"),
-                role=user.get("role", "user"),
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT username, password, group_name, role FROM users WHERE username = %s",
+                (username,),
             )
+            row = cursor.fetchone()
+
+    if row and row["password"] == password:
+        return success(
+            username=row["username"],
+            group=row["group_name"],
+            role=row.get("role", "user"),
+        )
     return error_response(401, "Credenziali non valide")
 
 
@@ -27,7 +35,22 @@ def login(payload: Dict[str, Any]):
 def list_users(role: str = Query("user")):
     if role != "admin":
         return error_response(403, "Operazione permessa solo agli amministratori")
-    users = read_json_file(USERS_FILE) or []
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT username, password, group_name, role FROM users ORDER BY username"
+            )
+            rows = cursor.fetchall()
+
+    users = [
+        {
+            "username": row["username"],
+            "password": row["password"],
+            "group": row["group_name"],
+            "role": row.get("role", "user"),
+        }
+        for row in rows
+    ]
     return success(users=users)
 
 
@@ -45,25 +68,24 @@ def create_user(payload: Dict[str, Any]):
     if not username or not password or not group:
         return error_response(400, "Campi obbligatori mancanti")
 
-    users = read_json_file(USERS_FILE) or []
-    groups = read_json_file(GROUPS_FILE) or []
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SELECT 1 FROM groups WHERE name = %s", (group,))
+            if cursor.fetchone() is None:
+                return error_response(400, "Seleziona un gruppo valido")
 
-    if group not in groups:
-        return error_response(400, "Seleziona un gruppo valido")
+            cursor.execute("SELECT 1 FROM users WHERE username = %s", (username,))
+            if cursor.fetchone() is not None:
+                return error_response(409, "Username già esistente")
 
-    for user in users:
-        if user.get("username") == username:
-            return error_response(409, "Username già esistente")
-
-    users.append({
-        "username": username,
-        "password": password,
-        "group": group,
-        "role": role,
-    })
-
-    if not write_json_file(USERS_FILE, users):
-        return error_response(500, "Impossibile salvare gli utenti")
+            cursor.execute(
+                """
+                INSERT INTO users (username, password, group_name, role)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (username, password, group, role),
+            )
+            conn.commit()
 
     return success()
 
@@ -79,33 +101,50 @@ def update_user(payload: Dict[str, Any]):
     if not username:
         return error_response(400, "Username mancante")
 
-    users = read_json_file(USERS_FILE) or []
-    groups = read_json_file(GROUPS_FILE) or []
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT username, group_name, role FROM users WHERE username = %s",
+                (username,),
+            )
+            existing = cursor.fetchone()
+            if existing is None:
+                return error_response(404, "Utente non trovato")
 
-    found = False
-    for user in users:
-        if user.get("username") == username:
-            found = True
+            fields = []
+            values: List[Any] = []
+
             if "password" in updates and updates["password"]:
-                user["password"] = updates["password"]
+                fields.append("password = %s")
+                values.append(str(updates["password"]))
+
             if "group" in updates and str(updates["group"]).strip():
                 new_group = str(updates["group"]).strip()
-                if new_group not in groups:
+                cursor.execute("SELECT 1 FROM groups WHERE name = %s", (new_group,))
+                if cursor.fetchone() is None:
                     return error_response(400, "Seleziona un gruppo valido")
-                user["group"] = new_group
+                fields.append("group_name = %s")
+                values.append(new_group)
+
             if "role" in updates:
                 new_role = "admin" if updates.get("role") == "admin" else "user"
-                if user.get("role", "user") == "admin" and new_role != "admin":
-                    if count_admins(users) < 2:
+                if existing.get("role", "user") == "admin" and new_role != "admin":
+                    cursor.execute(
+                        "SELECT COUNT(*) AS total FROM users WHERE role = 'admin'"
+                    )
+                    admin_count_row = cursor.fetchone()
+                    if admin_count_row and admin_count_row["total"] < 2:
                         return error_response(400, "Deve esistere almeno un amministratore")
-                user["role"] = new_role
-            break
+                fields.append("role = %s")
+                values.append(new_role)
 
-    if not found:
-        return error_response(404, "Utente non trovato")
+            if not fields:
+                return success()
 
-    if not write_json_file(USERS_FILE, users):
-        return error_response(500, "Impossibile salvare gli utenti")
+            values.append(username)
+            query = f"UPDATE users SET {', '.join(fields)} WHERE username = %s"
+            cursor.execute(query, tuple(values))
+            conn.commit()
 
     return success()
 
@@ -119,20 +158,27 @@ def delete_user(payload: Dict[str, Any]):
     if not username:
         return error_response(400, "Username mancante")
 
-    users = read_json_file(USERS_FILE) or []
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                "SELECT username, role FROM users WHERE username = %s",
+                (username,),
+            )
+            existing = cursor.fetchone()
+            if existing is None:
+                return error_response(404, "Utente non trovato")
 
-    index = next((i for i, user in enumerate(users) if user.get("username") == username), -1)
-    if index == -1:
-        return error_response(404, "Utente non trovato")
+            if existing.get("role", "user") == "admin":
+                cursor.execute(
+                    "SELECT COUNT(*) AS total FROM users WHERE role = 'admin'"
+                )
+                admin_count_row = cursor.fetchone()
+                if admin_count_row and admin_count_row["total"] < 2:
+                    return error_response(400, "Non è possibile eliminare l'unico admin")
 
-    if users[index].get("role", "user") == "admin":
-        admins = count_admins(users)
-        if admins < 2:
-            return error_response(400, "Non è possibile eliminare l'unico admin")
-
-    users.pop(index)
-
-    if not write_json_file(USERS_FILE, users):
-        return error_response(500, "Impossibile salvare gli utenti")
+            cursor.execute("DELETE FROM users WHERE username = %s", (username,))
+            if cursor.rowcount == 0:
+                return error_response(500, "Impossibile eliminare l'utente")
+            conn.commit()
 
     return success()
