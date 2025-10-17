@@ -1,0 +1,42 @@
+{
+    "drinks": [
+        {
+            "name": "Caffè",
+            "options": [
+                "Corto",
+                "Lungo",
+                "Macchiato"
+            ]
+        },
+        {
+            "name": "Cappuccino",
+            "options": [
+                "Classico",
+                "Senza lattosio"
+            ]
+        }
+    ],
+    "foods": [
+        {
+            "name": "Cornetto",
+            "options": [
+                "Vuoto",
+                "Crema",
+                "Cioccolato"
+            ]
+        },
+        {
+            "name": "Panino",
+            "options": [
+                "Prosciutto",
+                "Vegetariano"
+            ]
+        },
+        {
+            "name": "tramezzino",
+            "options": [
+                "prosciutto e formaggio"
+            ]
+        }
+    ]
+}
